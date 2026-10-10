@@ -1,19 +1,42 @@
-# SLA — Viação Hoffmann · Sistema de Viagens (protótipo)
+# Viação Hoffmann — Sistema de Viagens (protótipo)
 
-Site estático (`index.html` + `logo.png`), sem build. Para rodar localmente basta abrir o `index.html`
-ou servir a pasta (`python3 -m http.server`). Deploy: Vercel (projeto estático, sem configuração extra).
+Site estático (`index.html`) + API serverless (`api/`) + Postgres (Neon) na Vercel.
 
 > **Protótipo demonstrativo.** Nenhuma passagem real é emitida e nenhum pagamento é processado.
-> Todos os dados (reservas, motoristas, escalas, senha do administrador) ficam no `localStorage` do navegador.
-> Para uso real são necessários servidor, banco de dados compartilhado e autenticação segura.
+> Horários, preços e vagas são ilustrativos.
 
-## Áreas
-- **Início** – busca por origem/destino/data (municípios via API do IBGE), escolha de poltronas (até o nº de passageiros) e pré-reserva com QR.
-- **Reservas** – reservas deste navegador (persistem ao recarregar).
-- **Administração** – exige login do proprietário; frota, programação, gestão de motoristas e escalas.
-- **Área da equipe** – candidatura de motoristas; painel do proprietário (aprova/recusa, gera código individual) e do motorista (aceita escalas, solicita viagens abertas, checklist).
+## Arquitetura
+- `index.html` — front-end (HTML/CSS/JS puro, sem build). Fala com a API em `/api/*`.
+- `api/[...path].js` — todas as rotas da API (um único handler com roteador interno).
+- `lib/db.js` — conexão Postgres; cria o schema e os dados de exemplo sozinho na primeira requisição.
+- `lib/auth.js` — sessão por cookie assinado (HttpOnly, SameSite=Lax), hash de códigos, limite de tentativas de login.
+- `lib/trips.js` — regras de viagens, poltronas e horários ilustrativos.
+- `dev-server.js` — servidor local (estáticos + API). `tests/api-test.js` — testes da API.
 
-## Acesso do administrador
-Não há senha no código. No primeiro acesso a Administração/Área da equipe pede para **criar a senha** (mín. 6 caracteres),
-guardada apenas como hash SHA-256 com sal no navegador. Para redefinir, limpe os dados do site.
-Códigos de motoristas são exibidos uma única vez na aprovação e guardados só como hash.
+## Variáveis de ambiente (Vercel → Settings → Environment Variables)
+| Nome | Para quê |
+|---|---|
+| `DATABASE_URL` | String de conexão do Postgres (Neon). |
+| `SESSION_SECRET` | Segredo (≥ 32 caracteres) que assina cookies e protege os códigos dos motoristas. |
+| `ADMIN_PASSWORD` | Senha do administrador. Para trocar, edite a variável e faça redeploy. |
+
+## O que fica no banco
+Reservas (com controle de poltronas no servidor — dois clientes não pegam a mesma poltrona), candidaturas e
+códigos de motoristas (só o hash do código é guardado, e ele é exibido uma única vez ao aprovar), escalas,
+solicitações de viagem, status da frota e das viagens.
+
+## Segurança
+- Rotas de administrador/motorista exigem sessão válida; revogar um motorista derruba a sessão dele na hora.
+- Login com limite de tentativas por IP (8 falhas em 15 min bloqueiam por 15 min).
+- Toda escrita exige `Content-Type: application/json` (proteção CSRF) e valida os dados no servidor.
+- Todo texto exibido passa por escape de HTML.
+- "Minhas reservas" é por navegador (um identificador aleatório guardado no aparelho), pois não há conta de passageiro.
+
+## Rodar localmente
+```bash
+npm install
+DATABASE_URL=postgres://usuario@localhost:5432/vh SESSION_SECRET=um-segredo-bem-grande-1234567890 \
+ADMIN_PASSWORD=minha-senha node dev-server.js 3000
+# testes da API (servidor rodando):
+BASE=http://localhost:3000 ADMIN_PASSWORD=minha-senha node tests/api-test.js
+```
