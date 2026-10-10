@@ -66,6 +66,13 @@ function driverTripJson(t) {
   return { id: t.id, from: t.from_city, to: t.to_city, date: t.trip_date, hour: t.hour, mode: t.mode, driver: t.driver, status: t.status };
 }
 
+// registra a falha e avisa quantas tentativas restam antes do bloqueio de 15 minutos
+async function loginFailed(ip, msg) {
+  await auth.registerFailure(ip);
+  const left = await auth.failuresLeft(ip);
+  throw new HttpError(401, left > 0 ? `${msg} Restam ${left} tentativa(s) antes do bloqueio.` : `${msg} Limite de tentativas atingido: aguarde 15 minutos.`);
+}
+
 const routes = {
   // ---------- público ----------
   'GET /health': async () => { await db.query('select 1'); return { ok: true }; },
@@ -161,13 +168,13 @@ const routes = {
     if (role === 'owner') {
       const pw = process.env.ADMIN_PASSWORD;
       if (!pw) throw new HttpError(503, 'Senha do administrador não configurada no servidor.');
-      if (!auth.safeEqual(secret, pw)) { await auth.registerFailure(ip); throw new HttpError(401, 'Senha do administrador incorreta.'); }
+      if (!auth.safeEqual(secret, pw)) await loginFailed(ip, 'Senha do administrador incorreta.');
       await auth.clearFailures(ip);
       auth.setSession(req, res, { r: 'owner' });
       return { role: 'owner' };
     }
     const { rows } = await db.query(`select id, name from driver_applications where status='Aprovado' and access_hash=$1`, [auth.hashDriverCode(secret)]);
-    if (!rows.length) { await auth.registerFailure(ip); throw new HttpError(401, 'Código inválido ou cadastro ainda não aprovado.'); }
+    if (!rows.length) await loginFailed(ip, 'Código inválido ou cadastro ainda não aprovado.');
     await auth.clearFailures(ip);
     auth.setSession(req, res, { r: 'driver', d: rows[0].id });
     return { role: 'driver', id: rows[0].id, name: rows[0].name };
