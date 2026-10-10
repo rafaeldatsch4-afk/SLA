@@ -335,7 +335,12 @@ const routes = {
 module.exports = async function handler(req, res) {
   try {
     const url = new URL(req.url, 'http://localhost');
-    const path = url.pathname.replace(/^\/api/, '').replace(/\/+$/, '') || '/';
+    // vercel.json reescreve /api/* para /api/index?__p=<caminho>; sem o parâmetro, usa o próprio pathname
+    const rewritten = url.searchParams.get('__p');
+    url.searchParams.delete('__p');
+    const path = rewritten !== null
+      ? '/' + rewritten.replace(/^\/+|\/+$/g, '')
+      : url.pathname.replace(/^\/api(\/index)?/, '').replace(/\/+$/, '') || '/';
     const route = routes[req.method + ' ' + path];
     if (!route) {
       const exists = Object.keys(routes).some(k => k.endsWith(' ' + path));

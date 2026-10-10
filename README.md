@@ -7,7 +7,7 @@ Site estático (`index.html`) + API serverless (`api/`) + Postgres (Neon) na Ver
 
 ## Arquitetura
 - `index.html` — front-end (HTML/CSS/JS puro, sem build). Fala com a API em `/api/*`.
-- `api/[...path].js` — todas as rotas da API (um único handler com roteador interno).
+- `api/index.js` — todas as rotas da API (um único handler com roteador interno).
 - `lib/db.js` — conexão Postgres; cria o schema e os dados de exemplo sozinho na primeira requisição.
 - `lib/auth.js` — sessão por cookie assinado (HttpOnly, SameSite=Lax), hash de códigos, limite de tentativas de login.
 - `lib/trips.js` — regras de viagens, poltronas e horários ilustrativos.

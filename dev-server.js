@@ -3,12 +3,17 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const handler = require('./api/[...path].js');
+const handler = require('./api/index.js');
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png', '.json': 'application/json' };
 
 http.createServer((req, res) => {
   if (req.url.startsWith('/api/')) {
+    // mesmo rewrite do vercel.json: /api/a/b?x=1 -> /api/index?__p=a/b&x=1
+    const u = new URL(req.url, 'http://localhost');
+    const sub = u.pathname.replace(/^\/api\/?/, '');
+    u.searchParams.set('__p', sub);
+    req.url = '/api/index' + u.search;
     let raw = '';
     req.on('data', c => (raw += c));
     req.on('end', () => {
