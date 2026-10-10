@@ -1,6 +1,7 @@
 const db = require('../lib/db');
 const auth = require('../lib/auth');
 const T = require('../lib/trips');
+const enc = require('../lib/crypto');
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -140,11 +141,14 @@ const routes = {
     const experience = oneOf(body.experience || 'Menos de 1 ano', ['Menos de 1 ano', '1 a 3 anos', '3 a 5 anos', 'Mais de 5 anos'], 'experiência');
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw bad('E-mail inválido.');
     const ip = auth.clientIp(req);
-    const dup = await db.query(`select 1 from driver_applications where lower(email)=lower($1) and status<>'Recusado'`, [email]);
+    const emailHash = enc.blindIndex(email);
+    const dup = await db.query(`select 1 from driver_applications where email_hash=$1 and status<>'Recusado'`, [emailHash]);
     if (dup.rows.length) throw new HttpError(409, 'Já existe um cadastro com esse e-mail.');
     const pending = (await db.query(`select count(*)::int n from driver_applications where status='Pendente'`)).rows[0].n;
     if (pending >= 200) throw new HttpError(429, 'Limite de cadastros pendentes atingido. Tente mais tarde.');
-    await db.query('insert into driver_applications(name,phone,email,city,cnh,experience) values($1,$2,$3,$4,$5,$6)', [name, phone, email, city, cnh, experience]);
+    // telefone e e-mail vão criptografados; só o nome e a cidade ficam legíveis no banco
+    await db.query('insert into driver_applications(name,phone,email,email_hash,city,cnh,experience) values($1,$2,$3,$4,$5,$6,$7)',
+      [name, enc.encrypt(phone), enc.encrypt(email), emailHash, city, cnh, experience]);
     return { ok: true };
   },
 
@@ -241,7 +245,7 @@ const routes = {
     ]);
     return {
       apps: apps.rows.map(a => ({
-        id: a.id, name: a.name, phone: a.phone, email: a.email, city: a.city, cnh: a.cnh, experience: a.experience,
+        id: a.id, name: a.name, phone: enc.decrypt(a.phone), email: enc.decrypt(a.email), city: a.city, cnh: a.cnh, experience: a.experience,
         status: a.status, hasCode: a.has_code, createdAt: new Date(a.created_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
       })),
       reservations: resv.rows.map(resToJson),

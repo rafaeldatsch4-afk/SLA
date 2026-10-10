@@ -66,14 +66,15 @@ const cid = 'abcd1234-abcd-1234-abcd-1234567890ab';
   r = await call('POST', '/api/login', { role: 'owner', secret: process.env.ADMIN_PASSWORD });
   ok(r.status === 200 && /HttpOnly/.test(r.sc) && /SameSite=Lax/.test(r.sc), 'login admin com cookie HttpOnly');
   r = await call('GET', '/api/me'); ok(r.j.role === 'owner', 'me = owner');
-  r = await call('GET', '/api/admin/data'); const d = r.j; ok(r.status === 200 && d.apps.length === 1 && d.reservations.length >= 3, 'admin/data ok');
+  r = await call('GET', '/api/admin/data'); const d = r.j; const joana = d.apps.find(a => a.name === 'Joana Teste'); ok(r.status === 200 && !!joana && d.reservations.length >= 3, 'admin/data ok');
+  ok(joana.email === 'joana@t.com' && joana.phone === '5199', 'admin vê telefone/e-mail descriptografados');
   ok(!JSON.stringify(d).includes('access_hash'), 'hash não vaza em admin/data');
   // cookie adulterado
   r = await call('GET', '/api/admin/data', null, { cookieOverride: cookie.slice(0, -3) + 'abc' }); ok(r.status === 401, 'cookie adulterado => 401');
 
   // aprovar motorista
-  r = await call('POST', '/api/admin/driver-applications/review', { id: d.apps[0].id, action: 'approve' }); const code = r.j.code; ok(/^\d{8}$/.test(code), 'aprovação devolve código de 8 dígitos');
-  r = await call('GET', '/api/admin/data'); ok(r.j.apps[0].hasCode && r.j.apps[0].status === 'Aprovado' && !JSON.stringify(r.j).includes(code), 'código não aparece de novo');
+  r = await call('POST', '/api/admin/driver-applications/review', { id: joana.id, action: 'approve' }); const code = r.j.code; ok(/^\d{8}$/.test(code), 'aprovação devolve código de 8 dígitos');
+  r = await call('GET', '/api/admin/data'); ok(r.j.apps.find(a => a.id === joana.id).hasCode && r.j.apps.find(a => a.id === joana.id).status === 'Aprovado' && !JSON.stringify(r.j).includes(code), 'código não aparece de novo');
   // viagem aberta + escala
   await call('POST', '/api/admin/driver-trips', { from: 'Canela', to: 'Gramado', date: today, hour: '08:00', mode: 'Solicitação' });
   await call('POST', '/api/admin/driver-trips', { from: 'Gramado', to: 'Canela', date: today, hour: '09:00', mode: 'Escala', driver: 'Joana Teste' });
@@ -104,7 +105,7 @@ const cid = 'abcd1234-abcd-1234-abcd-1234567890ab';
   r = await call('POST', '/api/admin/driver-requests/review', { id: rq.id, approve: true }); ok(r.status === 409, 'não analisa de novo');
 
   // revogar => sessão do motorista morre
-  r = await call('POST', '/api/admin/driver-applications/review', { id: d.apps[0].id, action: 'reject' }); ok(r.status === 200, 'dono revoga acesso');
+  r = await call('POST', '/api/admin/driver-applications/review', { id: joana.id, action: 'reject' }); ok(r.status === 200, 'dono revoga acesso');
   cookie = driverCookie; r = await call('GET', '/api/driver/data'); ok(r.status === 401, 'sessão do motorista revogado cai na hora');
 
   // rate limit de login
