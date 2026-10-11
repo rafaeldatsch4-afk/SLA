@@ -1,0 +1,10 @@
+{
+  "name": "aviacao-hoffmann",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Viação Hoffmann — sistema de viagens (protótipo) com API em Postgres",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
