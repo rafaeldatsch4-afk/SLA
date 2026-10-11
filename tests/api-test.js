@@ -12,13 +12,25 @@ async function call(method, path, body, { cookieOverride, raw } = {}) {
   let j = null; try { j = await r.json(); } catch (e) {}
   return { status: r.status, j, sc };
 }
-const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+const realToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+// os fluxos usam AMANHÃ (sempre há horários); só as checagens de "já partiu" usam hoje
+const addDays = (d, n) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const today = addDays(realToday, 1);
 const cid = 'abcd1234-abcd-1234-abcd-1234567890ab';
 
 (async () => {
   let r = await call('GET', '/api/health'); ok(r.status === 200 && r.j.ok, 'health / schema criado');
   r = await call('GET', '/api/trips?date=' + today); ok(r.j.trips.length === 11 && r.j.trips[0].id === '6', 'lista 11 viagens cadastradas');
   const t1 = r.j.trips.find(t => t.id === '1'); ok(t1.available === 17, 'vagas = 17 na viagem 1 (' + t1.available + ')');
+  ok(t1.date === today && typeof t1.departed === 'boolean' && r.j.trips.every(t => t.departed === false), '/trips devolve data e departed=false para amanhã');
+  const nowBR = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+  const rt = await call('GET', '/api/trips?date=' + realToday);
+  ok(rt.j.trips.every(t => t.departed === (t.depart <= nowBR)), 'hoje: departed bate com o horário de Brasília (' + nowBR + ')');
+  const rs = await call('GET', '/api/search?from=Porto%20Alegre&to=Santa%20Maria&date=' + realToday);
+  ok(rs.j.trips.every(t => t.depart > nowBR), 'busca de hoje não lista viagens que já partiram');
+  const far = addDays(realToday, 400);
+  r = await call('GET', '/api/search?from=Porto%20Alegre&to=Manaus&date=' + far); ok(r.status === 400, 'busca além de 180 dias rejeitada');
+  r = await call('POST', '/api/reservations', { tripId: '1', date: far, seats: [1], clientId: cid }); ok(r.status === 400, 'reserva além de 180 dias rejeitada');
   r = await call('GET', '/api/search?from=Porto%20Alegre&to=Santa%20Maria&date=' + today);
   ok(r.j.trips.length === 2, 'busca POA→Santa Maria acha 2 cadastradas');
   r = await call('GET', '/api/search?from=Porto%20Alegre&to=Manaus&date=' + today);
@@ -43,7 +55,17 @@ const cid = 'abcd1234-abcd-1234-abcd-1234567890ab';
   ok(racers.filter(x => x.status === 200).length === 1 && racers.filter(x => x.status === 200).length + racers.filter(x => x.status === 409).length === 5, 'corrida: no máx. 1 vence (' + racers.map(x => x.status) + ')');
   r = await call('POST', '/api/reservations', { tripId: sim.id, date: today, seats: [10], clientId: cid }); ok(r.status === 200 && r.j.reservations[0].tripId === sim.id, 'reserva em horário simulado');
   r = await call('POST', '/api/reservations', { tripId: 'sim|x|y|06:30', date: today, seats: [10], clientId: cid }); ok(r.status === 404, 'sim id forjado rejeitado');
-  r = await call('GET', '/api/reservations?clientId=' + cid); ok(r.j.reservations.length === 3, 'minhas reservas = 3');
+  const dep = 'sim|Porto%20Alegre|Manaus|06:30';
+  r = await call('POST', '/api/reservations', { tripId: dep, date: realToday, seats: [11], clientId: cid });
+  ok(nowBR >= '06:30' ? r.status === 409 : r.status === 200, 'viagem de hoje que já partiu: ' + (nowBR >= '06:30' ? 'recusada (409)' : 'ainda não partiu, aceita'));
+  const tmr = today;
+  r = await call('POST', '/api/reservations', { tripId: dep, date: tmr, seats: [11], clientId: cid }); ok(r.status === 200, 'mesma viagem amanhã é aceita');
+  const toCancel = r.j.reservations[0].code;
+  r = await call('POST', '/api/reservations/cancel', { code: toCancel, clientId: 'outro-cliente-1234567' }); ok(r.status === 404, 'cancelar reserva de outro aparelho => 404');
+  r = await call('POST', '/api/reservations/cancel', { code: toCancel, clientId: cid }); ok(r.status === 200, 'cancelar a própria reserva');
+  r = await call('GET', '/api/seats?trip=' + encodeURIComponent(dep) + '&date=' + tmr); ok(!r.j.taken.includes(11), 'poltrona cancelada volta a ficar livre');
+  r = await call('POST', '/api/reservations/cancel', { code: toCancel, clientId: cid }); ok(r.status === 404, 'cancelar duas vezes => 404');
+  r = await call('GET', '/api/reservations?clientId=' + cid); ok(r.j.reservations.length >= 3, 'minhas reservas >= 3 (' + r.j.reservations.length + ')');
   r = await call('GET', '/api/reservations?clientId=outro-cliente-1234567'); ok(r.j.reservations.length === 0, 'reservas isoladas por cliente');
 
   // CSRF / método
@@ -81,7 +103,7 @@ const cid = 'abcd1234-abcd-1234-abcd-1234567890ab';
   r = await call('POST', '/api/admin/driver-trips', { from: 'A', to: 'a', date: today, hour: '08:00', mode: 'Escala', driver: 'x' }); ok(r.status === 400, 'origem=destino rejeitado');
   r = await call('POST', '/api/admin/fleet-status', { id: 'VH-101', status: 'Em viagem' }); ok(r.status === 200 && r.j.fleetStatus['VH-101'] === 'Em viagem', 'status da frota gravado');
   r = await call('POST', '/api/admin/fleet-status', { id: 'XXX', status: 'Em viagem' }); ok(r.status === 400, 'veículo inválido rejeitado');
-  r = await call('POST', '/api/staff/trip-status', { tripId: '1', status: 'Em andamento' }); ok(r.status === 200, 'status de viagem gravado');
+  r = await call('POST', '/api/staff/trip-status', { tripId: '1', status: 'Em andamento' }); ok(r.status === 200 && r.j.tripStatus['1|' + realToday] === 'Em andamento', 'status de viagem gravado só para o dia de hoje (chave id|data)');
   r = await call('GET', '/api/staff/manifest?tripId=1&date=' + today); ok(r.j.passengers.length === 2, 'manifesto lista 2 passageiros');
   const ownerCookie = cookie;
 
@@ -107,6 +129,12 @@ const cid = 'abcd1234-abcd-1234-abcd-1234567890ab';
   // revogar => sessão do motorista morre
   r = await call('POST', '/api/admin/driver-applications/review', { id: joana.id, action: 'reject' }); ok(r.status === 200, 'dono revoga acesso');
   cookie = driverCookie; r = await call('GET', '/api/driver/data'); ok(r.status === 401, 'sessão do motorista revogado cai na hora');
+
+  // excluir cadastro (apagamento de dados)
+  cookie = ownerCookie; r = await call('POST', '/api/admin/driver-applications/delete', { id: joana.id }); ok(r.status === 200, 'dono exclui cadastro');
+  r = await call('GET', '/api/admin/data'); ok(!r.j.apps.some(a => a.id === joana.id), 'cadastro excluído some do painel');
+  r = await call('POST', '/api/admin/driver-applications/delete', { id: joana.id }); ok(r.status === 404, 'excluir de novo => 404');
+  r = await call('POST', '/api/driver-applications', { name: 'Joana Teste', phone: '5199', email: 'joana@t.com', city: 'Canela', cnh: 'D' }); ok(r.status === 200, 'e-mail pode se cadastrar de novo após exclusão');
 
   // rate limit de login
   cookie = '';

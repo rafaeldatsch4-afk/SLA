@@ -92,7 +92,7 @@ const routes = {
     const from = str(query.from, 60, 'origem'), to = str(query.to, 60, 'destino');
     if (!T.validCity(from) || !T.validCity(to)) throw bad('Nome de cidade inválido.');
     if (T.normCity(from) === T.normCity(to)) throw bad('Escolha uma origem e um destino diferentes.');
-    if (!T.validDate(query.date) || query.date < T.todayBR()) throw bad('Escolha uma data a partir de hoje.');
+    if (!T.validDate(query.date) || !T.withinHorizon(query.date)) throw bad('Escolha uma data entre hoje e os próximos 180 dias.');
     return { trips: await T.searchTrips(from, to, query.date) };
   },
 
@@ -106,7 +106,8 @@ const routes = {
   'POST /reservations': async ({ req, body }) => {
     const trip = await T.resolveTrip(body.tripId);
     if (!trip) throw new HttpError(404, 'Viagem não encontrada.');
-    if (!T.validDate(body.date) || body.date < T.todayBR()) throw bad('Data inválida.');
+    if (!T.validDate(body.date) || !T.withinHorizon(body.date)) throw bad('Escolha uma data entre hoje e os próximos 180 dias.');
+    if (T.isDeparted(trip, body.date)) throw new HttpError(409, 'Esta viagem já partiu. Escolha outro horário.');
     const clientId = str(body.clientId, 64, 'clientId');
     if (!/^[A-Za-z0-9-]{16,64}$/.test(clientId)) throw bad('clientId inválido.');
     const seats = [...new Set((Array.isArray(body.seats) ? body.seats : []).map(Number))];
@@ -134,6 +135,18 @@ const routes = {
       if (e.code === '23505') throw new HttpError(409, 'Alguma poltrona acabou de ser ocupada. Escolha novamente.');
       throw e;
     }
+  },
+
+  // o passageiro cancela a própria reserva (identificada pelo clientId do aparelho); libera a poltrona
+  'POST /reservations/cancel': async ({ body }) => {
+    const code = str(body.code, 20, 'código');
+    const clientId = str(body.clientId, 64, 'clientId');
+    const r = (await db.query('select * from reservations where code=$1 and client_id=$2', [code, clientId])).rows[0];
+    if (!r) throw new HttpError(404, 'Reserva não encontrada.');
+    const trip = await T.resolveTrip(r.trip_id);
+    if (r.travel_date < T.todayBR() || (trip && T.isDeparted(trip, r.travel_date))) throw new HttpError(409, 'Esta viagem já partiu e não pode mais ser cancelada.');
+    await db.query('delete from reservations where id=$1', [r.id]);
+    return { ok: true };
   },
 
   'GET /reservations': async ({ query }) => {
@@ -198,8 +211,9 @@ const routes = {
     const trip = await T.resolveTrip(body.tripId);
     if (!trip) throw bad('Viagem inválida.');
     const status = oneOf(body.status, TRIP_STATUS, 'status');
+    // viagens são diárias: o status vale só para o dia de hoje (chave id|data)
     const cur = await kvGet('trip_status');
-    cur[trip.id] = status;
+    cur[trip.id + '|' + T.todayBR()] = status;
     await kvSet('trip_status', cur);
     return { tripStatus: cur };
   },
@@ -286,6 +300,14 @@ const routes = {
     throw new HttpError(500, 'Não foi possível gerar um código único. Tente de novo.');
   },
 
+  // exclui o cadastro de um candidato/motorista (pedido de apagamento de dados); a sessão dele cai junto
+  'POST /admin/driver-applications/delete': async ({ req, body }) => {
+    await requireOwner(req);
+    const r = await db.query('delete from driver_applications where id=$1 returning id', [intId(body.id)]);
+    if (!r.rows.length) throw new HttpError(404, 'Cadastro não encontrado.');
+    return { ok: true };
+  },
+
   'POST /admin/driver-names': async ({ req, body }) => {
     await requireOwner(req);
     const name = str(body.name, 100, 'nome do motorista');
@@ -363,7 +385,9 @@ module.exports = async function handler(req, res) {
       if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) {
         return send(res, 415, { error: 'Content-Type deve ser application/json.' });
       }
-      body = req.body && typeof req.body === 'object' ? req.body : {};
+      let parsed;
+      try { parsed = typeof req.body === 'string' ? JSON.parse(req.body) : req.body; } catch (e) { return send(res, 400, { error: 'JSON inválido.' }); }
+      body = parsed && typeof parsed === 'object' ? parsed : {};
     }
     const query = Object.fromEntries(url.searchParams);
     return send(res, 200, await route({ req, res, body, query }));

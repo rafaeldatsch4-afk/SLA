@@ -43,3 +43,9 @@ ADMIN_PASSWORD=minha-senha DATA_ENCRYPTION_KEY=$(openssl rand -hex 32) node dev-
 # testes da API (servidor rodando):
 BASE=http://localhost:3000 ADMIN_PASSWORD=minha-senha node tests/api-test.js
 ```
+
+## Regras de negócio
+- Viagens de hoje que já partiram (horário de Brasília) não aparecem na busca e não aceitam reserva; reservas só até 180 dias à frente.
+- O passageiro pode cancelar a própria reserva (libera a poltrona) até a saída da viagem.
+- O status de uma viagem (Programada/Em andamento/…) vale por dia, já que as viagens são diárias.
+- O administrador pode excluir o cadastro de um candidato/motorista (apagamento de dados pessoais).
